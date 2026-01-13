@@ -1,0 +1,20 @@
+# Robots.txt for DONALD
+User-agent: *
+Allow: /
+
+# Disallow admin and auth pages
+Disallow: /admin
+Disallow: /login
+Disallow: /register
+Disallow: /forgot-password
+Disallow: /reset-password
+
+# Disallow API routes
+Disallow: /api/
+
+# Sitemap
+Sitemap: https://donald.vn/sitemap.xml
+
+# Crawl delay (optional)
+Crawl-delay: 1
+

@@ -1,0 +1,120 @@
+version: "3.8"
+
+# DEVELOPMENT DOCKER COMPOSE
+# Full stack: FE + BE + DB + NocoDB
+# For testing and development only
+
+services:
+  # PostgreSQL Database - Development
+  postgres:
+    image: postgres:17-alpine
+    container_name: donald-postgres-dev
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: donald_local
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    command:
+      - postgres
+      - -c
+      - synchronous_commit=off
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - max_connections=100
+    networks:
+      - donald-network
+
+  # Backend API (Go + Fiber) - Development
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: donald-backend-dev
+    environment:
+      # Database
+      DATABASE_URL: postgresql://postgres:password@localhost:5432/donald_local?sslmode=disable
+
+      # Server
+      PORT: 3030
+
+      # Performance (development settings)
+      GOGC: 100
+
+      # CORS - Allow frontend origin
+      CORS_ORIGIN: "*"
+
+      # Rate limiting disabled for development
+      RATE_LIMIT_DISABLED: "true"
+
+      # Development credentials (safe for testing)
+      CLOUDINARY_CLOUD_NAME: your-test-cloud
+      CLOUDINARY_API_KEY: test-key
+      CLOUDINARY_API_SECRET: test-secret
+    ports:
+      - "3030:3030"
+    volumes:
+      - ./backend:/app
+      - /app/bin # Exclude built binaries
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - donald-network
+    restart: unless-stopped
+    command: ["air", "-c", ".air.toml"]
+
+  # Frontend (Vite + Alpine) - Development
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:3030/api
+    container_name: donald-frontend-dev
+    environment:
+      VITE_API_URL: http://localhost:3030/api
+    ports:
+      - "3000:80"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - donald-network
+    restart: unless-stopped
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+
+  # NocoDB - Content Management
+  nocodb:
+    image: nocodb/nocodb:latest
+    container_name: donald-nocodb-dev
+    environment:
+      NC_DB: pg://postgres:5432?u=postgres&p=password&d=donald_local
+      NC_PUBLIC_URL: http://localhost:8080
+      NC_DISABLE_TELEMETRY: true
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - donald-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  donald-network:
+    driver: bridge

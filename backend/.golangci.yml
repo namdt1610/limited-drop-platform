@@ -1,0 +1,4 @@
+run:
+  linters:
+    enable:
+      - fieldalignment

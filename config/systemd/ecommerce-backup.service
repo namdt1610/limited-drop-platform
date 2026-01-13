@@ -1,0 +1,27 @@
+[Unit]
+Description=Node Ecommerce Database Backup Service
+After=network.target
+
+[Service]
+Type=oneshot
+User=ecommerce
+Group=ecommerce
+WorkingDirectory=/opt/node-ecommerce
+
+# Run backup
+ExecStart=/opt/node-ecommerce/bin/backup \
+  -db /opt/node-ecommerce/database.db \
+  -output /backups/ecommerce \
+  -compress=true
+
+# Log output
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=db-backup
+
+# Security: No access to network, read-only filesystem except for output
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

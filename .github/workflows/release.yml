@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  GO_VERSION: '1.21'
+  BUN_VERSION: '1.0.0'
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      # Build Backend for multiple platforms
+      - name: Build backend binaries
+        working-directory: backend
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          
+          # Linux AMD64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+          go build -ldflags="-s -w -X main.Version=$VERSION" \
+          -o ../dist/server-linux-amd64 ./cmd/server
+          
+          # Linux ARM64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+          go build -ldflags="-s -w -X main.Version=$VERSION" \
+          -o ../dist/server-linux-arm64 ./cmd/server
+          
+          # Darwin AMD64 (macOS Intel)
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 \
+          go build -ldflags="-s -w -X main.Version=$VERSION" \
+          -o ../dist/server-darwin-amd64 ./cmd/server
+          
+          # Darwin ARM64 (macOS Apple Silicon)
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+          go build -ldflags="-s -w -X main.Version=$VERSION" \
+          -o ../dist/server-darwin-arm64 ./cmd/server
+          
+          # Windows AMD64
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+          go build -ldflags="-s -w -X main.Version=$VERSION" \
+          -o ../dist/server-windows-amd64.exe ./cmd/server
+
+      # Build Frontend
+      - name: Build frontend
+        working-directory: alpine
+        run: |
+          bun install
+          bun run build
+
+      # Package releases
+      - name: Package releases
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          mkdir -p releases
+          
+          # Create frontend archive
+          cd alpine/dist
+          tar -czvf ../../releases/frontend-$VERSION.tar.gz .
+          cd ../..
+          
+          # Create platform-specific archives
+          for binary in dist/server-*; do
+            name=$(basename $binary)
+            if [[ $name == *.exe ]]; then
+              platform=${name%.exe}
+              platform=${platform#server-}
+              zip -j releases/ecommerce-$VERSION-$platform.zip $binary
+            else
+              platform=${name#server-}
+              tar -czvf releases/ecommerce-$VERSION-$platform.tar.gz -C dist $(basename $binary)
+            fi
+          done
+          
+          # Create full release archive (Linux AMD64 + Frontend)
+          mkdir -p full-release
+          cp dist/server-linux-amd64 full-release/server
+          cp -r alpine/dist full-release/frontend
+          cp docker-compose.yml full-release/
+          cp deploy.sh full-release/
+          cp README.md full-release/
+          tar -czvf releases/ecommerce-$VERSION-full.tar.gz full-release
+
+      # Generate changelog
+      - name: Generate changelog
+        id: changelog
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          if [ -n "$PREV_TAG" ]; then
+            CHANGES=$(git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          else
+            CHANGES=$(git log --pretty=format:"- %s (%h)" --no-merges -20)
+          fi
+          
+          echo "changes<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # Create GitHub Release
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ github.ref_name }}
+          body: |
+            ## Changes in ${{ github.ref_name }}
+            
+            ${{ steps.changelog.outputs.changes }}
+            
+            ## Download
+            
+            | Platform | Architecture | Download |
+            |----------|--------------|----------|
+            | Linux | AMD64 | `ecommerce-${{ github.ref_name }}-linux-amd64.tar.gz` |
+            | Linux | ARM64 | `ecommerce-${{ github.ref_name }}-linux-arm64.tar.gz` |
+            | macOS | Intel | `ecommerce-${{ github.ref_name }}-darwin-amd64.tar.gz` |
+            | macOS | Apple Silicon | `ecommerce-${{ github.ref_name }}-darwin-arm64.tar.gz` |
+            | Windows | AMD64 | `ecommerce-${{ github.ref_name }}-windows-amd64.zip` |
+            
+            ## Full Package
+            
+            Download `ecommerce-${{ github.ref_name }}-full.tar.gz` for complete package including frontend.
+            
+            ## Docker
+            
+            ```bash
+            docker pull ${{ secrets.DOCKER_USERNAME }}/ecommerce-backend:${{ github.ref_name }}
+            ```
+          files: |
+            releases/*
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

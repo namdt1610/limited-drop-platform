@@ -1,0 +1,220 @@
+name: CI with LocalStack
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  GO_VERSION: '1.21'
+  BUN_VERSION: '1.0.0'
+
+jobs:
+  # =============================================================================
+  # BACKEND TESTS WITH LOCALSTACK
+  # =============================================================================
+  backend-localstack-test:
+    name: Backend Tests (LocalStack)
+    runs-on: ubuntu-latest
+
+    services:
+      localstack:
+        image: localstack/localstack:latest
+        ports:
+          - 4566:4566
+        env:
+          SERVICES: s3,sqs,secretsmanager
+          DEBUG: 0
+          PERSISTENCE: 0
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_DEFAULT_REGION: us-east-1
+        options: >-
+          --health-cmd "curl -f http://localhost:4566/_localstack/health"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      - name: Install AWS CLI
+        run: |
+          pip install awscli-local awscli
+
+      - name: Initialize LocalStack resources
+        run: |
+          # Wait for LocalStack to be ready
+          echo "Waiting for LocalStack..."
+          sleep 5
+          
+          # Create S3 bucket
+          echo "Creating S3 bucket..."
+          awslocal s3 mb s3://donald-vibe --endpoint-url=http://localhost:4566
+          awslocal s3api put-bucket-acl --bucket donald-vibe --acl public-read --endpoint-url=http://localhost:4566
+          
+          # Create SQS queues
+          echo "Creating SQS queues..."
+          awslocal sqs create-queue --queue-name donald-orders --endpoint-url=http://localhost:4566
+          awslocal sqs create-queue --queue-name donald-emails --endpoint-url=http://localhost:4566
+          awslocal sqs create-queue --queue-name donald-notifications --endpoint-url=http://localhost:4566
+          
+          # Create Secrets
+          echo "Creating secrets..."
+          awslocal secretsmanager create-secret --name donald/jwt-secret --secret-string "test-jwt-secret" --endpoint-url=http://localhost:4566
+          awslocal secretsmanager create-secret --name donald/db-password --secret-string "test-db-password" --endpoint-url=http://localhost:4566
+          
+          echo "LocalStack initialization complete!"
+
+      - name: Verify LocalStack resources
+        run: |
+          echo "=== S3 Buckets ==="
+          awslocal s3 ls --endpoint-url=http://localhost:4566
+          
+          echo "=== SQS Queues ==="
+          awslocal sqs list-queues --endpoint-url=http://localhost:4566
+          
+          echo "=== Secrets ==="
+          awslocal secretsmanager list-secrets --endpoint-url=http://localhost:4566
+
+      - name: Download Go dependencies
+        working-directory: backend
+        run: go mod download
+
+      - name: Run unit tests
+        working-directory: backend
+        run: go test ./tests/unit/... -v -race
+
+      - name: Run integration tests with LocalStack
+        working-directory: backend
+        env:
+          AWS_ENDPOINT_URL: http://localhost:4566
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_DEFAULT_REGION: us-east-1
+          USE_S3: true
+          USE_SQS: true
+          USE_SECRETS_MANAGER: true
+          S3_BUCKET: donald-vibe
+        run: go test ./tests/integration/... -v
+
+  # =============================================================================
+  # FRONTEND TESTS
+  # =============================================================================
+  frontend-test:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        working-directory: alpine
+        run: bun install
+
+      - name: Run tests
+        working-directory: alpine
+        run: bun run test:run
+
+      - name: Build frontend
+        working-directory: alpine
+        run: bun run build
+
+  # =============================================================================
+  # FULL STACK INTEGRATION TEST
+  # =============================================================================
+  full-stack-test:
+    name: Full Stack Integration (LocalStack)
+    runs-on: ubuntu-latest
+    needs: [backend-localstack-test, frontend-test]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Compose
+        run: |
+          docker compose version
+
+      - name: Start LocalStack environment
+        run: |
+          docker compose -f docker-compose.localstack.yml up -d localstack
+          
+          # Wait for LocalStack to be healthy
+          echo "Waiting for LocalStack to be healthy..."
+          timeout 60 bash -c 'until docker exec localstack-main curl -sf http://localhost:4566/_localstack/health; do sleep 2; done'
+          echo "LocalStack is ready!"
+
+      - name: Initialize LocalStack resources
+        run: |
+          # Run init scripts
+          docker exec localstack-main bash -c '
+            awslocal s3 mb s3://donald-vibe
+            awslocal sqs create-queue --queue-name donald-orders
+            awslocal sqs create-queue --queue-name donald-emails
+            awslocal secretsmanager create-secret --name donald/jwt-secret --secret-string "test-secret"
+          '
+
+      - name: Build and start backend
+        run: |
+          docker compose -f docker-compose.localstack.yml up -d backend
+          
+          # Wait for backend to be healthy
+          echo "Waiting for backend..."
+          timeout 60 bash -c 'until curl -sf http://localhost:8000/health; do sleep 2; done'
+          echo "Backend is ready!"
+
+      - name: Run API smoke tests
+        run: |
+          echo "=== API Health Check ==="
+          curl -sf http://localhost:8000/health | jq
+          
+          echo "=== Get Products ==="
+          curl -sf http://localhost:8000/api/products | jq || echo "No products yet"
+          
+          echo "=== Get Active Drops ==="
+          curl -sf http://localhost:8000/api/drops | jq || echo "No drops yet"
+
+      - name: Test S3 upload (LocalStack)
+        run: |
+          echo "Testing S3 upload to LocalStack..."
+          echo "test content" > /tmp/test.txt
+          docker exec localstack-main awslocal s3 cp /tmp/test.txt s3://donald-vibe/test.txt 2>/dev/null || \
+          awslocal s3 cp /tmp/test.txt s3://donald-vibe/test.txt --endpoint-url=http://localhost:4566
+          
+          echo "Listing S3 bucket..."
+          awslocal s3 ls s3://donald-vibe/ --endpoint-url=http://localhost:4566
+
+      - name: Test SQS messaging (LocalStack)
+        run: |
+          echo "Testing SQS messaging to LocalStack..."
+          
+          # Send message
+          awslocal sqs send-message \
+            --queue-url http://localhost:4566/000000000000/donald-orders \
+            --message-body '{"orderId": "test-123", "action": "created"}' \
+            --endpoint-url=http://localhost:4566
+          
+          # Receive message
+          awslocal sqs receive-message \
+            --queue-url http://localhost:4566/000000000000/donald-orders \
+            --endpoint-url=http://localhost:4566 | jq
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose -f docker-compose.localstack.yml down -v

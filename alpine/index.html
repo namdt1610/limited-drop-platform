@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DONALD - Symbiosis Chrome</title>
+
+    <!-- Font DNS prefetch & preconnect -->
+    <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
+    <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+    <!-- Google Fonts: Symbiosis Chrome Typography -->
+    <!-- Inter: Body text | Playfair Display: Headings | JetBrains Mono: Specs/Prices -->
+    <link
+      rel="preload"
+      as="style"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Cormorant+Garamond:wght@600;700&family=Playfair+Display:wght@400;500;600;700;800&family=Cinzel+Decorative:wght@700;900&display=swap"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Cormorant+Garamond:wght@600;700&family=Playfair+Display:wght@400;500;600;700;800&family=Cinzel+Decorative:wght@700;900&display=swap"
+      rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
+    />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Cormorant+Garamond:wght@600;700&family=Playfair+Display:wght@400;500;600;700;800&family=Cinzel+Decorative:wght@700;900&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
+  </head>
+
+  <body class="overflow-x-hidden">
+    <div id="app" x-data="router" @route.window="navigate($event.detail)">
+      <mercury-background></mercury-background>
+
+      <main>
+        <template x-if="path === 'landing'">
+          <landing-page></landing-page>
+        </template>
+
+        <template x-if="path === 'drop'">
+          <drop-page></drop-page>
+        </template>
+
+        <template x-if="path === 'product'">
+          <product-page></product-page>
+        </template>
+
+        <template x-if="path === 'products'">
+          <products-page></products-page>
+        </template>
+
+        <template x-if="path === 'collection'">
+          <collection-page></collection-page>
+        </template>
+
+        <template x-if="path === 'checkout'">
+          <checkout-page></checkout-page>
+        </template>
+
+        <template x-if="path === 'payment-success'">
+          <payment-success-page></payment-success-page>
+        </template>
+
+        <template x-if="path === 'payment-cancel'">
+          <payment-cancel-page></payment-cancel-page>
+        </template>
+
+        <template x-if="path === 'terms'">
+          <terms-page></terms-page>
+        </template>
+
+        <template x-if="path === 'policy'">
+          <policy-page></policy-page>
+        </template>
+
+        <template x-if="path === 'track-order'">
+          <track-order-page></track-order-page>
+        </template>
+
+        <template x-if="path === 'verify'">
+          <verify-page></verify-page>
+        </template>
+      </main>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+    <!-- Dark-only: site always in dark mode. -->
+  </body>
+</html>

@@ -1,0 +1,102 @@
+version: "3.8"
+
+services:
+  # LocalStack - Mock AWS Services
+  localstack:
+    image: localstack/localstack:latest
+    container_name: localstack-main
+    ports:
+      - "4566:4566" # Edge port
+      # - "4510-4559:4510-4559" # External services port range (Commented out to avoid port conflicts)
+      - "8055:8080" # LocalStack Dashboard (internal port is 8080 usually, mapping to 8055)
+    environment:
+      # Services to enable (LocalStack v2+ lazy loads services, so we can omit this or use strict list)
+      # SERVICES: s3,sqs,dynamodb,secretsmanager
+      # Debugging
+      DEBUG: ${DEBUG:-0}
+      # Data persistence
+      PERSISTENCE: 1
+      # Docker socket for Lambda
+      DOCKER_HOST: unix:///var/run/docker.sock
+      # AWS Credentials
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - ./localstack-data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./localstack-init:/etc/localstack/init/ready.d # Scripts to run when ready
+    networks:
+      - ecommerce-local
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend - Go Fiber
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ecommerce-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV=local
+      - DATABASE_URL=/app/database/ecommerce.db
+      # AWS/LocalStack Config
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - USE_S3=true
+      - USE_SQS=true
+      - USE_SECRETS_MANAGER=true
+    volumes:
+      - ./backend/database:/app/database
+    depends_on:
+      localstack:
+        condition: service_healthy
+    networks:
+      - ecommerce-local
+
+  # Frontend
+  frontend:
+    build:
+      context: ./alpine
+      dockerfile: Dockerfile.dev # Assuming dev dockerfile exists or use standard
+    container_name: ecommerce-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - ecommerce-local
+
+  # NocoDB - Database Admin UI
+  nocodb:
+    image: nocodb/nocodb:latest
+    container_name: donald-nocodb
+    environment:
+      # Connect to the same SQLite file as Backend
+      NC_DB: "sqlite3:///usr/app/database/ecommerce.db?busy_timeout=5000"
+      NC_PUBLIC_URL: http://localhost:8080
+      NC_DISABLE_TELEMETRY: true
+      NC_JWT_SECRET: "localsecret"
+      NC_ADMIN_EMAIL: "admin@donald.local"
+      NC_ADMIN_PASSWORD: "password123"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend/database:/usr/app/database
+      - nocodb_data:/usr/app/data
+    networks:
+      - ecommerce-local
+    restart: unless-stopped
+
+networks:
+  ecommerce-local:
+    driver: bridge

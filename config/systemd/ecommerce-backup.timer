@@ -1,0 +1,17 @@
+[Unit]
+Description=Node Ecommerce Database Backup Timer (Daily at 2 AM)
+Requires=ecommerce-backup.service
+
+[Timer]
+# Run daily at 2:00 AM
+OnCalendar=daily
+OnCalendar=*-*-* 02:00:00
+
+# Run immediately if missed
+Persistent=true
+
+# Randomize start by up to 5 minutes to avoid load spikes
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

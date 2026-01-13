@@ -1,0 +1,169 @@
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+
+env:
+  GO_VERSION: '1.21'
+  BUN_VERSION: '1.0.0'
+
+jobs:
+  # =============================================================================
+  # BUILD
+  # =============================================================================
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Backend Build
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build backend
+        working-directory: backend
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+          go build -ldflags="-s -w -X main.Version=${{ github.sha }}" \
+          -o server ./cmd/server
+
+      # Frontend Build
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Build frontend
+        working-directory: alpine
+        run: |
+          bun install
+          bun run build
+
+      # Package artifacts
+      - name: Create deployment package
+        run: |
+          mkdir -p deploy
+          cp backend/server deploy/
+          cp -r alpine/dist deploy/frontend
+          cp docker-compose.yml deploy/
+          cp deploy.sh deploy/
+          tar -czvf deploy-${{ github.sha }}.tar.gz deploy/
+
+      - name: Upload deployment package
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-package
+          path: deploy-${{ github.sha }}.tar.gz
+          retention-days: 30
+
+  # =============================================================================
+  # DEPLOY TO VPS
+  # =============================================================================
+  deploy:
+    name: Deploy to ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    needs: build
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Download deployment package
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-package
+
+      - name: Deploy to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "deploy-${{ github.sha }}.tar.gz"
+          target: "/tmp/"
+
+      - name: Execute deployment script
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            
+            # Configuration
+            APP_DIR="/var/www/ecommerce"
+            BACKUP_DIR="/var/www/backups"
+            DEPLOY_PACKAGE="/tmp/deploy-${{ github.sha }}.tar.gz"
+            
+            echo "=== Starting deployment ==="
+            
+            # Create backup
+            if [ -d "$APP_DIR" ]; then
+              echo "Creating backup..."
+              mkdir -p $BACKUP_DIR
+              BACKUP_NAME="backup-$(date +%Y%m%d_%H%M%S).tar.gz"
+              tar -czvf $BACKUP_DIR/$BACKUP_NAME $APP_DIR 2>/dev/null || true
+              
+              # Keep only last 5 backups
+              ls -t $BACKUP_DIR/backup-*.tar.gz | tail -n +6 | xargs -r rm
+            fi
+            
+            # Extract new deployment
+            echo "Extracting deployment package..."
+            mkdir -p $APP_DIR
+            cd /tmp
+            tar -xzvf $DEPLOY_PACKAGE
+            
+            # Stop current services
+            echo "Stopping services..."
+            sudo systemctl stop ecommerce-backend || true
+            
+            # Deploy new files
+            echo "Deploying new files..."
+            cp -f deploy/server $APP_DIR/
+            cp -rf deploy/frontend/* $APP_DIR/public/ 2>/dev/null || mkdir -p $APP_DIR/public && cp -rf deploy/frontend/* $APP_DIR/public/
+            
+            # Set permissions
+            chmod +x $APP_DIR/server
+            
+            # Start services
+            echo "Starting services..."
+            sudo systemctl start ecommerce-backend
+            
+            # Health check
+            echo "Running health check..."
+            sleep 5
+            if curl -sf http://localhost:3030/health > /dev/null; then
+              echo "Health check PASSED"
+            else
+              echo "Health check FAILED - Rolling back..."
+              # Rollback logic here if needed
+              exit 1
+            fi
+            
+            # Cleanup
+            rm -rf /tmp/deploy $DEPLOY_PACKAGE
+            
+            echo "=== Deployment completed successfully ==="
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "Deployment to ${{ github.event.inputs.environment }} succeeded!"
+          else
+            echo "Deployment to ${{ github.event.inputs.environment }} failed!"
+          fi
