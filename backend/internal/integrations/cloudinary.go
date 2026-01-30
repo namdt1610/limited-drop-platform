@@ -1,6 +1,6 @@
 /**
  * CLOUDINARY SERVICE
- * 
+ *
  * Image upload to Cloudinary
  */
 
@@ -20,13 +20,18 @@ import (
 	"time"
 )
 
+var (
+	// CloudinaryBaseURL can be overridden for testing
+	CloudinaryBaseURL = "https://api.cloudinary.com/v1_1"
+)
+
 type CloudinaryUploadResult struct {
 	PublicID  string `json:"public_id"`
 	SecureURL string `json:"secure_url"`
 	URL       string `json:"url"`
 	Width     int    `json:"width"`
 	Height    int    `json:"height"`
-	Format   string `json:"format"`
+	Format    string `json:"format"`
 }
 
 // UploadToCloudinary: Upload image to Cloudinary
@@ -67,8 +72,8 @@ func UploadToCloudinary(file io.Reader, filename string) (*CloudinaryUploadResul
 		formData.Set("api_key", apiKey)
 	}
 
-	// Upload URL
-	uploadURL := fmt.Sprintf("https://api.cloudinary.com/v1_1/%s/image/upload", cloudName)
+	// Upload URL using variable base URL
+	uploadURL := fmt.Sprintf("%s/%s/image/upload", CloudinaryBaseURL, cloudName)
 
 	// Make request
 	resp, err := http.PostForm(uploadURL, formData)
@@ -132,8 +137,8 @@ func UploadBase64ToCloudinary(base64Data string) (*CloudinaryUploadResult, error
 		formData.Set("upload_preset", uploadPreset)
 	}
 
-	// Upload URL
-	uploadURL := fmt.Sprintf("https://api.cloudinary.com/v1_1/%s/image/upload", cloudName)
+	// Upload URL using variable base URL
+	uploadURL := fmt.Sprintf("%s/%s/image/upload", CloudinaryBaseURL, cloudName)
 
 	// Make request
 	resp, err := http.PostForm(uploadURL, formData)
@@ -159,4 +164,3 @@ func UploadBase64ToCloudinary(base64Data string) (*CloudinaryUploadResult, error
 
 	return &result, nil
 }
-

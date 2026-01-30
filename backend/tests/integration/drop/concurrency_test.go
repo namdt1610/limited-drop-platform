@@ -9,6 +9,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
+	"ecommerce-backend/internal/integrations"
 	"ecommerce-backend/internal/repository"
 	servicepkg "ecommerce-backend/internal/service"
 )
@@ -69,7 +70,13 @@ func TestPurchaseDrop_Concurrency(t *testing.T) {
 			insertDrop(t, db, 1, now, tc.dropSize, tc.stock, 0, 1)
 
 			repo := repository.NewRepository(db)
-			svc := servicepkg.NewService(repo)
+
+			// Mocks
+			payment := &MockPaymentGateway{}
+			email := &MockEmailSender{}
+			sheets := &MockSheetSubmitter{}
+
+			svc := servicepkg.NewService(repo, payment, email, sheets)
 
 			var wg sync.WaitGroup
 			wg.Add(tc.attempts)
@@ -118,4 +125,50 @@ func TestPurchaseDrop_Concurrency(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Mocks
+
+type MockPaymentGateway struct{}
+
+func (m *MockPaymentGateway) CreateCheckout(req integrations.PayOSCheckoutRequest) (*integrations.PayOSCheckoutResponse, error) {
+	resp := &integrations.PayOSCheckoutResponse{}
+	resp.Data.CheckoutURL = "http://mock-checkout-url"
+	return resp, nil
+}
+
+func (m *MockPaymentGateway) VerifyPayment(orderCode int64) (*integrations.PayOSVerifyResponse, error) {
+	return nil, nil
+}
+
+func (m *MockPaymentGateway) RefundPayment(orderCode int64, reason string) error {
+	return nil
+}
+
+func (m *MockPaymentGateway) CancelPayment(orderCode int64) error {
+	return nil
+}
+
+func (m *MockPaymentGateway) GenerateSignature(data string) string {
+	return "mock-signature"
+}
+
+type MockEmailSender struct{}
+
+func (m *MockEmailSender) SendOrderConfirmation(email, orderNumber string, amount float64) error {
+	return nil
+}
+
+func (m *MockEmailSender) SendSymbioteReceipt(email, phone, status, elapsed string) error {
+	return nil
+}
+
+func (m *MockEmailSender) SendOrderDetails(email string, order interface{}) error {
+	return nil
+}
+
+type MockSheetSubmitter struct{}
+
+func (m *MockSheetSubmitter) SubmitOrder(name, phone, email, address, notes string, amount float64, timestamp interface{}) error {
+	return nil
 }

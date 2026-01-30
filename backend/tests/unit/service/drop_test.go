@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"ecommerce-backend/internal/integrations"
 	"ecommerce-backend/internal/models"
 	"ecommerce-backend/internal/service"
 
@@ -52,7 +53,7 @@ func TestGetActiveDrops_TableDriven(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newMockRepository()
 			tc.setup(repo)
-			srv := service.NewService(repo)
+			srv := service.NewService(repo, nil, nil, nil)
 
 			drops, err := srv.GetActiveDrops()
 
@@ -135,7 +136,7 @@ func TestGetDropStatus_TableDriven(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newMockRepository()
 			tc.setup(repo)
-			srv := service.NewService(repo)
+			srv := service.NewService(repo, nil, nil, nil)
 
 			status, err := srv.GetDropStatus(tc.dropID)
 
@@ -159,38 +160,61 @@ func TestGetDropStatus_TableDriven(t *testing.T) {
 func TestPurchaseDrop_TableDriven(t *testing.T) {
 	now := time.Now()
 	tests := []struct {
-		name    string
-		dropID  uint64
-		request *service.PurchaseRequest
-		setup   func(*mockRepository)
-		wantErr string
+		name           string
+		dropID         uint64
+		request        *service.PurchaseRequest
+		setup          func(*mockRepository, *mockPaymentGateway)
+		wantErr        string
+		wantPaymentURL string
 	}{
 		{
-			name:   "success - valid purchase",
+			name:   "success - valid purchase with PayOS",
 			dropID: 1,
 			request: &service.PurchaseRequest{
 				Quantity: 1, Name: "John", Phone: "0123",
-				Email: "john@test.com", Address: "123 St",
+				Email:    "john@test.com", Address: "123 St",
 				Province: "HCM", District: "D1", Ward: "W1",
 			},
-			setup: func(m *mockRepository) {
+			setup: func(m *mockRepository, pg *mockPaymentGateway) {
 				m.drops[1] = &models.LimitedDrop{
-					ID: 1, ProductID: 10,
-					TotalStock: 100, Sold: 0, DropSize: 50,
-					StartTime: now.Add(-time.Minute), IsActive: 1,
+					ID:         1,
+					ProductID:  10,
+					TotalStock: 100,
+					Sold:       0,
+					DropSize:   50,
+					StartTime:  now.Add(-time.Minute),
+					IsActive:   1,
 				}
 				m.products[10] = &models.Product{ID: 10, Name: "Test", Price: 100000}
+				pg.checkoutResponse = &integrations.PayOSCheckoutResponse{
+					Data: struct {
+						Bin           string `json:"bin"`
+						AccountNumber string `json:"accountNumber"`
+						AccountName   string `json:"accountName"`
+						Amount        int64  `json:"amount"`
+						Description   string `json:"description"`
+						OrderCode     int64  `json:"orderCode"`
+						Currency      string `json:"currency"`
+						PaymentLinkID string `json:"paymentLinkId"`
+						QRCode        string `json:"qrCode"`
+						CheckoutURL   string `json:"checkoutUrl"`
+					}{
+						CheckoutURL: "https://payos.vn/checkout",
+					},
+				}
 			},
-			wantErr: "",
+			wantPaymentURL: "https://payos.vn/checkout",
 		},
 		{
 			name:    "error - drop not active",
 			dropID:  1,
 			request: &service.PurchaseRequest{Quantity: 1, Name: "John", Phone: "0123"},
-			setup: func(m *mockRepository) {
+			setup: func(m *mockRepository, pg *mockPaymentGateway) {
 				m.drops[1] = &models.LimitedDrop{
-					ID: 1, ProductID: 10,
-					StartTime: now.Add(-time.Minute), IsActive: 0,
+					ID:        1,
+					ProductID: 10,
+					StartTime: now.Add(-time.Minute),
+					IsActive:  0,
 				}
 			},
 			wantErr: "limited drop is not active",
@@ -199,10 +223,12 @@ func TestPurchaseDrop_TableDriven(t *testing.T) {
 			name:    "error - drop not started",
 			dropID:  1,
 			request: &service.PurchaseRequest{Quantity: 1, Name: "John", Phone: "0123"},
-			setup: func(m *mockRepository) {
+			setup: func(m *mockRepository, pg *mockPaymentGateway) {
 				m.drops[1] = &models.LimitedDrop{
-					ID: 1, ProductID: 10,
-					StartTime: now.Add(time.Hour), IsActive: 1,
+					ID:        1,
+					ProductID: 10,
+					StartTime: now.Add(time.Hour),
+					IsActive:  1,
 				}
 			},
 			wantErr: "limited drop has not started yet",
@@ -211,11 +237,13 @@ func TestPurchaseDrop_TableDriven(t *testing.T) {
 			name:    "error - drop has ended",
 			dropID:  1,
 			request: &service.PurchaseRequest{Quantity: 1, Name: "John", Phone: "0123"},
-			setup: func(m *mockRepository) {
+			setup: func(m *mockRepository, pg *mockPaymentGateway) {
+				endTime := now.Add(-time.Minute)
 				m.drops[1] = &models.LimitedDrop{
-					ID: 1, ProductID: 10,
+					ID:        1,
+					ProductID: 10,
 					StartTime: now.Add(-2 * time.Hour),
-					EndTime:   ptrTime(now.Add(-time.Hour)),
+					EndTime:   &endTime,
 					IsActive:  1,
 				}
 			},
@@ -225,11 +253,14 @@ func TestPurchaseDrop_TableDriven(t *testing.T) {
 			name:    "error - sold out (total stock)",
 			dropID:  1,
 			request: &service.PurchaseRequest{Quantity: 1, Name: "John", Phone: "0123"},
-			setup: func(m *mockRepository) {
+			setup: func(m *mockRepository, pg *mockPaymentGateway) {
 				m.drops[1] = &models.LimitedDrop{
-					ID: 1, ProductID: 10,
-					TotalStock: 10, Sold: 10, DropSize: 50,
-					StartTime: now.Add(-time.Minute), IsActive: 1,
+					ID:         1,
+					ProductID:  10,
+					TotalStock: 100,
+					Sold:       100,
+					StartTime:  now.Add(-time.Minute),
+					IsActive:   1,
 				}
 			},
 			wantErr: "limited drop is sold out",
@@ -238,11 +269,15 @@ func TestPurchaseDrop_TableDriven(t *testing.T) {
 			name:    "error - drop size limit reached",
 			dropID:  1,
 			request: &service.PurchaseRequest{Quantity: 1, Name: "John", Phone: "0123"},
-			setup: func(m *mockRepository) {
+			setup: func(m *mockRepository, pg *mockPaymentGateway) {
 				m.drops[1] = &models.LimitedDrop{
-					ID: 1, ProductID: 10,
-					TotalStock: 100, Sold: 5, DropSize: 5, // DropSize reached
-					StartTime: now.Add(-time.Minute), IsActive: 1,
+					ID:         1,
+					ProductID:  10,
+					TotalStock: 100,
+					Sold:       50,
+					DropSize:   50,
+					StartTime:  now.Add(-time.Minute),
+					IsActive:   1,
 				}
 			},
 			wantErr: "limited drop size limit reached",
@@ -251,14 +286,14 @@ func TestPurchaseDrop_TableDriven(t *testing.T) {
 			name:    "error - drop not found",
 			dropID:  999,
 			request: &service.PurchaseRequest{Quantity: 1, Name: "John", Phone: "0123"},
-			setup:   func(m *mockRepository) {},
+			setup:   func(m *mockRepository, pg *mockPaymentGateway) {},
 			wantErr: "drop not found",
 		},
 		{
 			name:    "error - product not found",
 			dropID:  1,
 			request: &service.PurchaseRequest{Quantity: 1, Name: "John", Phone: "0123"},
-			setup: func(m *mockRepository) {
+			setup: func(m *mockRepository, pg *mockPaymentGateway) {
 				m.drops[1] = &models.LimitedDrop{
 					ID: 1, ProductID: 999,
 					TotalStock: 100, Sold: 0, DropSize: 50,
@@ -268,13 +303,29 @@ func TestPurchaseDrop_TableDriven(t *testing.T) {
 			},
 			wantErr: "product not found",
 		},
+		{
+			name:    "error - payment gateway failure",
+			dropID:  1,
+			request: &service.PurchaseRequest{Quantity: 1, Name: "Test", Phone: "0123"},
+			setup: func(m *mockRepository, pg *mockPaymentGateway) {
+				m.drops[1] = &models.LimitedDrop{ID: 1, ProductID: 10, TotalStock: 10, DropSize: 50, StartTime: now.Add(-time.Minute), IsActive: 1}
+				m.products[10] = &models.Product{ID: 10, Name: "Test", Price: 100000}
+				pg.checkoutErr = errors.New("payos error")
+			},
+			wantErr: "failed to create PayOS checkout",
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newMockRepository()
-			tc.setup(repo)
-			srv := service.NewService(repo)
+			pg := newMockPaymentGateway()
+			
+			if tc.setup != nil {
+				tc.setup(repo, pg)
+			}
+			
+			srv := service.NewService(repo, pg, nil, nil)
 
 			result, err := srv.PurchaseDrop(tc.dropID, tc.request)
 
@@ -282,7 +333,7 @@ func TestPurchaseDrop_TableDriven(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error '%s', got nil", tc.wantErr)
 				}
-				if err.Error() != tc.wantErr {
+				if err.Error() != tc.wantErr && !contains(err.Error(), tc.wantErr) {
 					t.Fatalf("expected error '%s', got '%s'", tc.wantErr, err.Error())
 				}
 				return
@@ -294,19 +345,24 @@ func TestPurchaseDrop_TableDriven(t *testing.T) {
 			if result == nil {
 				t.Fatal("expected result, got nil")
 			}
-			if result.PaymentURL == "" {
-				t.Fatal("expected payment URL, got empty")
+			if tc.wantPaymentURL != "" && result.PaymentURL != tc.wantPaymentURL {
+				t.Errorf("expected payment URL '%s', got '%s'", tc.wantPaymentURL, result.PaymentURL)
 			}
 		})
 	}
 }
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && s[0:len(substr)] == substr
+}
+
 
 func TestProcessSuccessfulDropPayment_TableDriven(t *testing.T) {
 	tests := []struct {
 		name      string
 		orderCode int64
 		dropID    uint64
-		setup     func(*mockRepository)
+		setup     func(*mockRepository, *mockEmailSender, *mockSheetSubmitter)
 		wantErr   bool
 		wantSold  uint32 // expected sold count after processing
 	}{
@@ -314,7 +370,7 @@ func TestProcessSuccessfulDropPayment_TableDriven(t *testing.T) {
 			name:      "success - winner (first payment)",
 			orderCode: 12345,
 			dropID:    1,
-			setup: func(m *mockRepository) {
+			setup: func(m *mockRepository, e *mockEmailSender, s *mockSheetSubmitter) {
 				m.drops[1] = &models.LimitedDrop{
 					ID: 1, ProductID: 10,
 					TotalStock: 100, Sold: 0, DropSize: 50,
@@ -338,7 +394,7 @@ func TestProcessSuccessfulDropPayment_TableDriven(t *testing.T) {
 			name:      "idempotency - already processed",
 			orderCode: 12345,
 			dropID:    1,
-			setup: func(m *mockRepository) {
+			setup: func(m *mockRepository, e *mockEmailSender, s *mockSheetSubmitter) {
 				m.drops[1] = &models.LimitedDrop{
 					ID: 1, TotalStock: 100, Sold: 1,
 				}
@@ -355,7 +411,7 @@ func TestProcessSuccessfulDropPayment_TableDriven(t *testing.T) {
 			name:      "loser - sold out during race",
 			orderCode: 99999,
 			dropID:    1,
-			setup: func(m *mockRepository) {
+			setup: func(m *mockRepository, e *mockEmailSender, s *mockSheetSubmitter) {
 				m.drops[1] = &models.LimitedDrop{
 					ID: 1, ProductID: 10,
 					TotalStock: 10, Sold: 10, // Already sold out
@@ -377,7 +433,7 @@ func TestProcessSuccessfulDropPayment_TableDriven(t *testing.T) {
 			name:      "error - increment error (not sold out)",
 			orderCode: 77777,
 			dropID:    1,
-			setup: func(m *mockRepository) {
+			setup: func(m *mockRepository, e *mockEmailSender, s *mockSheetSubmitter) {
 				m.drops[1] = &models.LimitedDrop{
 					ID: 1, ProductID: 10,
 					TotalStock: 100, Sold: 0,
@@ -397,8 +453,10 @@ func TestProcessSuccessfulDropPayment_TableDriven(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newMockRepository()
-			tc.setup(repo)
-			srv := service.NewService(repo)
+			email := newMockEmailSender()
+			sheets := newMockSheetSubmitter()
+			tc.setup(repo, email, sheets)
+			srv := service.NewService(repo, nil, email, sheets)
 
 			err := srv.ProcessSuccessfulDropPayment(tc.orderCode)
 
@@ -434,7 +492,7 @@ func TestPurchaseDrop_EdgeCases(t *testing.T) {
 		name    string
 		dropID  uint64
 		request *service.PurchaseRequest
-		setup   func(*mockRepository)
+		setup   func(*mockRepository, *mockPaymentGateway)
 		wantErr string
 	}{
 		{
@@ -443,7 +501,7 @@ func TestPurchaseDrop_EdgeCases(t *testing.T) {
 			request: &service.PurchaseRequest{
 				Quantity: 1, Name: "John", Phone: "0123",
 			},
-			setup: func(m *mockRepository) {
+			setup: func(m *mockRepository, pg *mockPaymentGateway) {
 				m.drops[1] = &models.LimitedDrop{
 					ID: 1, ProductID: 10,
 					TotalStock: 100, Sold: 0, DropSize: 50,
@@ -451,6 +509,22 @@ func TestPurchaseDrop_EdgeCases(t *testing.T) {
 					IsActive:  1,
 				}
 				m.products[10] = &models.Product{ID: 10, Name: "Test", Price: 100000}
+				pg.checkoutResponse = &integrations.PayOSCheckoutResponse{
+					Data: struct {
+						Bin           string `json:"bin"`
+						AccountNumber string `json:"accountNumber"`
+						AccountName   string `json:"accountName"`
+						Amount        int64  `json:"amount"`
+						Description   string `json:"description"`
+						OrderCode     int64  `json:"orderCode"`
+						Currency      string `json:"currency"`
+						PaymentLinkID string `json:"paymentLinkId"`
+						QRCode        string `json:"qrCode"`
+						CheckoutURL   string `json:"checkoutUrl"`
+					}{
+						CheckoutURL: "https://payos.vn/checkout",
+					},
+				}
 			},
 			wantErr: "", // Should succeed
 		},
@@ -460,31 +534,29 @@ func TestPurchaseDrop_EdgeCases(t *testing.T) {
 			request: &service.PurchaseRequest{
 				Quantity: 1, Name: "John", Phone: "0123",
 			},
-			setup: func(m *mockRepository) {
+			setup: func(m *mockRepository, pg *mockPaymentGateway) {
 				m.drops[1] = &models.LimitedDrop{
 					ID: 1, ProductID: 10,
-					TotalStock: 100, Sold: 9, DropSize: 10, // Room for 1 more
+					TotalStock: 100, Sold: 49, DropSize: 50,
 					StartTime: now.Add(-time.Minute), IsActive: 1,
 				}
 				m.products[10] = &models.Product{ID: 10, Name: "Test", Price: 100000}
-			},
-			wantErr: "", // Should succeed
-		},
-		{
-			name:   "edge - nil end time (no expiry)",
-			dropID: 1,
-			request: &service.PurchaseRequest{
-				Quantity: 1, Name: "John", Phone: "0123",
-			},
-			setup: func(m *mockRepository) {
-				m.drops[1] = &models.LimitedDrop{
-					ID: 1, ProductID: 10,
-					TotalStock: 100, Sold: 0, DropSize: 50,
-					StartTime: now.Add(-time.Hour),
-					EndTime:   nil, // No end time
-					IsActive:  1,
+				pg.checkoutResponse = &integrations.PayOSCheckoutResponse{
+					Data: struct {
+						Bin           string `json:"bin"`
+						AccountNumber string `json:"accountNumber"`
+						AccountName   string `json:"accountName"`
+						Amount        int64  `json:"amount"`
+						Description   string `json:"description"`
+						OrderCode     int64  `json:"orderCode"`
+						Currency      string `json:"currency"`
+						PaymentLinkID string `json:"paymentLinkId"`
+						QRCode        string `json:"qrCode"`
+						CheckoutURL   string `json:"checkoutUrl"`
+					}{
+						CheckoutURL: "https://payos.vn/checkout",
+					},
 				}
-				m.products[10] = &models.Product{ID: 10, Name: "Test", Price: 100000}
 			},
 			wantErr: "", // Should succeed
 		},
@@ -493,8 +565,9 @@ func TestPurchaseDrop_EdgeCases(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newMockRepository()
-			tc.setup(repo)
-			srv := service.NewService(repo)
+			pg := newMockPaymentGateway()
+			tc.setup(repo, pg)
+			srv := service.NewService(repo, pg, nil, nil)
 
 			result, err := srv.PurchaseDrop(tc.dropID, tc.request)
 

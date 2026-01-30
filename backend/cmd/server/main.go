@@ -11,6 +11,7 @@ import (
 	"ecommerce-backend/config"
 	"ecommerce-backend/internal/database"
 	"ecommerce-backend/internal/handlers"
+	"ecommerce-backend/internal/integrations"
 	"ecommerce-backend/internal/repository"
 	"ecommerce-backend/internal/service"
 
@@ -60,7 +61,10 @@ func main() {
 	// SmartExecutor automatically routes SELECT to Reader and writes to Writer
 	executor := database.NewSmartExecutor(database.DB.Writer, database.DB.Reader)
 	repo := repository.NewRepository(executor)
-	svc := service.NewService(repo)
+	payment := integrations.NewPayOSGateway()
+	email := integrations.NewResendEmailer()
+	sheets := integrations.NewSheetsSubmitter()
+	svc := service.NewService(repo, payment, email, sheets)
 	hdlrs := handlers.NewHandlers(svc)
 
 	// Initialize Fiber app

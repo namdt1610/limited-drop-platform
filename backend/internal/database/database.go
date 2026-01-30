@@ -24,7 +24,10 @@ func Connect(dbPath string) error {
 	// _synchronous=NORMAL: An toàn + nhanh (chỉ mất uncommitted transaction nếu mất điện)
 	// _busy_timeout=5000: Chờ 5s trước khi báo lỗi (giảm error rate khi tải cao)
 	// _foreign_keys=on: Bật foreign key constraints
-	dsn := dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=on&cache=shared"
+	// _txlock=immediate: Nâng cấp mọi transaction (BEGIN) thành BEGIN IMMEDIATE ngay lập tức.
+	// Điều này ngăn chặn tình trạng Deadlock khi nhiều connection cùng muốn nâng cấp từ Read lên Write lock.
+	// Kết hợp với SetMaxOpenConns(1), nó đảm bảo tính deterministic tuyệt đối cho Writer.
+	dsn := dbPath + "?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=on&_txlock=immediate"
 
 	var err error
 

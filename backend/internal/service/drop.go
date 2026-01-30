@@ -108,7 +108,8 @@ func (s *service) PurchaseDrop(dropID uint64, req *PurchaseRequest) (*PurchaseRe
 	}
 
 	// Create PayOS checkout
-	orderCode := time.Now().Unix()
+	// Use UnixNano to avoid collisions in high traffic
+	orderCode := time.Now().UnixNano()
 	amount := product.Price * uint64(req.Quantity)
 
 	// Create shipping address JSON
@@ -123,42 +124,7 @@ func (s *service) PurchaseDrop(dropID uint64, req *PurchaseRequest) (*PurchaseRe
 	}
 	shippingJSON, _ := json.Marshal(shippingAddress)
 
-	// Get frontend URL from environment, default to localhost:3000
-	frontendURL := os.Getenv("FRONTEND_URL")
-	if frontendURL == "" {
-		frontendURL = "http://localhost:3000"
-	}
-
-	payosReq := integrations.PayOSCheckoutRequest{
-		OrderCode:   orderCode,
-		Amount:      int64(amount),
-		Description: "Limited Drop Payment",
-		ReturnURL:   frontendURL + "/#payment-success",
-		CancelURL:   frontendURL + "/#payment-cancel",
-		Items: []integrations.PayOSItem{
-			{
-				Name:     product.Name,
-				Quantity: req.Quantity,
-				Price:    int64(product.Price),
-			},
-		},
-	}
-
-	checkout, err := integrations.CreatePayOSCheckout(payosReq)
-	if err != nil {
-		// For testing purposes, return a mock result if PayOS is not configured
-		if os.Getenv("PAYOS_CLIENT_ID") == "" {
-			return &PurchaseResult{
-				Message:    "Đặt Limited Drop thành công!",
-				PaymentURL: "https://payos.vn/test-payment",
-				OrderCode:  orderCode,
-			}, nil
-		}
-		return nil, fmt.Errorf("failed to create PayOS checkout: %w", err)
-	}
-
-	// Create order in database with PENDING payment status (status = 1)
-	// This allows webhook handler to link the payment back to customer info
+	// Create items JSON
 	items := []map[string]interface{}{
 		{
 			"product_id": dropID,
@@ -170,16 +136,43 @@ func (s *service) PurchaseDrop(dropID uint64, req *PurchaseRequest) (*PurchaseRe
 	}
 	itemsJSON, _ := json.Marshal(items)
 
+	// Create order in database FIRST with PENDING payment status (status = 1)
+	// This ensures that if payment is successful, we definitely have the order record.
 	// Pass PayOSOrderCode to CreateOrder to link the transaction
 	_, err = s.CreateOrder(req.Phone, shippingJSON, itemsJSON, 1, &orderCode) // 1 = PayOS payment method
 	if err != nil {
-		// Order creation failed, but checkout was created
-		// Log this but don't fail - webhook will retry
-		fmt.Fprintf(os.Stderr, "Failed to create order for payos checkout %d: %v\n", orderCode, err)
+		return nil, fmt.Errorf("failed to create local order: %w", err)
+	}
+
+	// Get frontend URL from environment, default to localhost:3000
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000"
+	}
+
+	payosReq := integrations.PayOSCheckoutRequest{
+		OrderCode:   orderCode,
+		Amount:      int64(amount),
+		Description: fmt.Sprintf("Drop %d", dropID),
+		ReturnURL:   frontendURL + "/#payment-success",
+		CancelURL:   frontendURL + "/#payment-cancel",
+		Items: []integrations.PayOSItem{
+			{
+				Name:     product.Name,
+				Quantity: req.Quantity,
+				Price:    int64(product.Price),
+			},
+		},
+	}
+
+	checkout, err := s.payment.CreateCheckout(payosReq)
+	if err != nil {
+		// If checkout creation fails, the order remains as PENDING (Abandoned Cart)
+		return nil, fmt.Errorf("failed to create PayOS checkout: %w", err)
 	}
 
 	return &PurchaseResult{
-		Message:    "Đặt Limited Drop thành công!",
+		Message:    "Đơn hàng đã được tạo!",
 		PaymentURL: checkout.Data.CheckoutURL,
 		OrderCode:  orderCode,
 	}, nil
@@ -245,29 +238,19 @@ func (s *service) ProcessSuccessfulDropPayment(orderCode int64) error {
 	}
 	shippingAddrStr := string(order.ShippingAddress)
 
-	// 4. Atomic Stock Increment (Race Condition Check)
-	err = s.repo.IncrementSoldCount(dropID, uint32(quantity))
-	if err != nil {
-		if errors.Is(err, repository.ErrSoldOut) {
-			// LOSER: Stock ran out while user was paying
-			// Update status to Cancelled (or specific SoldOut status if we have one)
-			s.repo.UpdateOrderStatus(order.ID, models.OrderCancelled)
-
-			// Send Loser Notification
-			go integrations.SendSymbioteReceipt(customerEmail, order.CustomerPhone, "LOSER", "N/A")
-			return nil
-		}
-		return err
-	}
-
-	// 5. WINNER: Update Order and Generate Assets
+	// 4. Execute Atomic Transaction (Stock + Order Status + Symbicode)
 	err = s.repo.WithTransaction(func(tx repository.Repository) error {
-		// Update Order Status to PAID
+		// 4.1. Increment Stock (Atomic Check)
+		if err := tx.IncrementSoldCount(dropID, uint32(quantity)); err != nil {
+			return err // Will be handled below (ErrSoldOut or other)
+		}
+
+		// 4.2. Update Order Status to PAID
 		if err := tx.UpdateOrderStatus(order.ID, models.OrderPaid); err != nil {
 			return err
 		}
 
-		// Create Symbicode
+		// 4.3. Create Symbicode
 		code, err := uuid.GenerateUUIDv7()
 		if err != nil {
 			return fmt.Errorf("failed to generate uuid: %w", err)
@@ -289,13 +272,22 @@ func (s *service) ProcessSuccessfulDropPayment(orderCode int64) error {
 		return nil
 	})
 
+	// 5. Handle Transaction Result
 	if err != nil {
-		// Transaction failed - rollback stock increment
-		s.repo.DecrementSoldCount(dropID, uint32(quantity))
+		if errors.Is(err, repository.ErrSoldOut) {
+			// LOSER: Stock ran out during transaction attempt
+			// Update status to Cancelled
+			s.repo.UpdateOrderStatus(order.ID, models.OrderCancelled)
+
+			// Send Loser Notification
+			go s.email.SendSymbioteReceipt(customerEmail, order.CustomerPhone, "LOSER", "N/A")
+			return nil
+		}
+		// Other errors: Return to retry (or log if fatal)
 		return err
 	}
 
-	// 6. Send Notifications (Async)
+	// 6. WINNER: Send Notifications (Async)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -303,9 +295,9 @@ func (s *service) ProcessSuccessfulDropPayment(orderCode int64) error {
 			}
 		}()
 
-		integrations.SendOrderConfirmationEmail(customerEmail, fmt.Sprintf("DV-%d", order.ID), float64(order.TotalAmount))
+		s.email.SendOrderConfirmation(customerEmail, fmt.Sprintf("DV-%d", order.ID), float64(order.TotalAmount))
 
-		integrations.SubmitOrderToGoogleSheet(
+		s.sheets.SubmitOrder(
 			customerName,
 			order.CustomerPhone,
 			customerEmail,
@@ -315,7 +307,7 @@ func (s *service) ProcessSuccessfulDropPayment(orderCode int64) error {
 			time.Now(),
 		)
 
-		integrations.SendSymbioteReceipt(customerEmail, order.CustomerPhone, "WINNER", time.Now().Format("2006-01-02 15:04:05"))
+		s.email.SendSymbioteReceipt(customerEmail, order.CustomerPhone, "WINNER", time.Now().Format("2006-01-02 15:04:05"))
 	}()
 
 	return nil

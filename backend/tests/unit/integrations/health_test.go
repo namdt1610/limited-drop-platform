@@ -10,53 +10,72 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestCheckHealth_DatabaseOK(t *testing.T) {
-	// Setup in-memory database
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+// =============================================================================
+// HEALTH CHECK TESTS (Table-Driven)
+// =============================================================================
+
+func TestCheckHealth_TableDriven(t *testing.T) {
+	// Setup in-memory database for "ok" cases
+	validDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	assert.NoError(t, err)
 
-	// Test
-	status := integrations.CheckHealth(db)
+	tests := []struct {
+		name           string
+		db             *gorm.DB
+		wantStatus     string
+		wantDBContains string
+	}{
+		{
+			name:           "success - database ok",
+			db:             validDB,
+			wantStatus:     "ok",
+			wantDBContains: "ok",
+		},
+		{
+			name:           "degraded - nil database",
+			db:             nil,
+			wantStatus:     "degraded",
+			wantDBContains: "error:",
+		},
+	}
 
-	// Assertions
-	assert.Equal(t, "ok", status.Status)
-	assert.NotEmpty(t, status.Timestamp)
-	assert.Equal(t, "ok", status.Checks["database"])
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			status := integrations.CheckHealth(tc.db)
+
+			assert.Equal(t, tc.wantStatus, status.Status)
+			assert.NotEmpty(t, status.Timestamp)
+			assert.Contains(t, status.Checks["database"], tc.wantDBContains)
+		})
+	}
 }
 
-func TestCheckHealth_DatabaseError(t *testing.T) {
-	// Setup invalid database connection - use a different approach
-	// Since SQLite in-memory always succeeds, we'll test with a nil db
-	var db *gorm.DB // nil database
-
-	// Test
-	status := integrations.CheckHealth(db)
-
-	// Assertions
-	assert.Equal(t, "degraded", status.Status)
-	assert.NotEmpty(t, status.Timestamp)
-	assert.Contains(t, status.Checks["database"], "error:")
-}
-
-func TestIsHealthy_OK(t *testing.T) {
-	// Setup in-memory database
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+func TestIsHealthy_TableDriven(t *testing.T) {
+	// Setup in-memory database for "ok" cases
+	validDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	assert.NoError(t, err)
 
-	// Test
-	healthy := integrations.IsHealthy(db)
+	tests := []struct {
+		name        string
+		db          *gorm.DB
+		wantHealthy bool
+	}{
+		{
+			name:        "healthy - valid database",
+			db:          validDB,
+			wantHealthy: true,
+		},
+		{
+			name:        "unhealthy - nil database",
+			db:          nil,
+			wantHealthy: false,
+		},
+	}
 
-	// Assertions
-	assert.True(t, healthy)
-}
-
-func TestIsHealthy_Degraded(t *testing.T) {
-	// Test with nil database
-	var db *gorm.DB // nil database
-
-	// Test
-	healthy := integrations.IsHealthy(db)
-
-	// Assertions
-	assert.False(t, healthy)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			healthy := integrations.IsHealthy(tc.db)
+			assert.Equal(t, tc.wantHealthy, healthy)
+		})
+	}
 }

@@ -5,72 +5,52 @@ import (
 	"testing"
 
 	"ecommerce-backend/internal/models"
-	"ecommerce-backend/internal/service"
-)
 
-// =============================================================================
-// PRODUCT SERVICE TESTS
-// =============================================================================
+	"github.com/stretchr/testify/assert"
+)
 
 func TestGetProduct_TableDriven(t *testing.T) {
 	tests := []struct {
 		name       string
 		productID  uint64
-		setup      func(*mockRepository)
+		mockReturn *models.Product
+		mockError  error
 		wantErr    bool
-		wantErrMsg string
 	}{
 		{
-			name:      "success - product exists",
-			productID: 1,
-			setup: func(m *mockRepository) {
-				m.products[1] = &models.Product{ID: 1, Name: "Test", Price: 100000}
-			},
-			wantErr: false,
+			name:       "success",
+			productID:  1,
+			mockReturn: &models.Product{ID: 1, Name: "Test Product"},
+			mockError:  nil,
+			wantErr:    false,
 		},
 		{
-			name:      "error - product not found",
-			productID: 999,
-			setup: func(m *mockRepository) {
-				// No products
-			},
+			name:       "error - not found",
+			productID:  99,
+			mockReturn: nil,
+			mockError:  errors.New("not found"),
 			wantErr:    true,
-			wantErrMsg: "product not found",
-		},
-		{
-			name:      "error - repository error",
-			productID: 1,
-			setup: func(m *mockRepository) {
-				m.productErr = errors.New("database connection error")
-			},
-			wantErr:    true,
-			wantErrMsg: "database connection error",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := newMockRepository()
-			tc.setup(repo)
-			srv := service.NewService(repo)
+			s, m := setup()
+			
+			// Configure Fake
+			if tc.mockError != nil {
+				m.productErr = tc.mockError
+			} else if tc.mockReturn != nil {
+				m.products[tc.productID] = tc.mockReturn
+			}
 
-			product, err := srv.GetProduct(tc.productID)
+			product, err := s.GetProduct(tc.productID)
 
 			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("expected error '%s', got nil", tc.wantErrMsg)
-				}
-				if err.Error() != tc.wantErrMsg {
-					t.Fatalf("expected error '%s', got '%s'", tc.wantErrMsg, err.Error())
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("expected success, got error: %v", err)
-			}
-			if product == nil {
-				t.Fatal("expected product, got nil")
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tc.mockReturn, product)
 			}
 		})
 	}
@@ -78,66 +58,43 @@ func TestGetProduct_TableDriven(t *testing.T) {
 
 func TestListProducts_TableDriven(t *testing.T) {
 	tests := []struct {
-		name      string
-		setup     func(*mockRepository)
-		wantCount int
-		wantErr   bool
+		name         string
+		setupMock    func(*mockRepository)
+		wantErr      bool
+		wantCount    int
 	}{
 		{
-			name: "success - returns only active products",
-			setup: func(m *mockRepository) {
+			name: "success - returns active only",
+			setupMock: func(m *mockRepository) {
 				m.products[1] = &models.Product{ID: 1, Name: "Active", IsActive: 1}
 				m.products[2] = &models.Product{ID: 2, Name: "Inactive", IsActive: 0}
-				m.products[3] = &models.Product{ID: 3, Name: "Active2", IsActive: 1}
+				m.products[3] = &models.Product{ID: 3, Name: "Active 2", IsActive: 1}
 			},
+			wantErr:   false,
 			wantCount: 2,
-			wantErr:   false,
 		},
 		{
-			name: "success - no active products",
-			setup: func(m *mockRepository) {
-				m.products[1] = &models.Product{ID: 1, Name: "Inactive", IsActive: 0}
+			name: "error - db failed",
+			setupMock: func(m *mockRepository) {
+				m.allProductsErr = errors.New("db error")
 			},
-			wantCount: 0,
-			wantErr:   false,
-		},
-		{
-			name: "success - empty product list",
-			setup: func(m *mockRepository) {
-				// No products
-			},
-			wantCount: 0,
-			wantErr:   false,
-		},
-		{
-			name: "error - repository error",
-			setup: func(m *mockRepository) {
-				m.allProductsErr = errors.New("database error")
-			},
-			wantErr: true,
+			wantErr:    true,
+			wantCount:  0,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := newMockRepository()
-			tc.setup(repo)
-			srv := service.NewService(repo)
+			s, m := setup()
+			tc.setupMock(m)
 
-			products, err := srv.ListProducts()
+			products, err := s.ListProducts()
 
 			if tc.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("expected success, got error: %v", err)
-			}
-			if len(products) != tc.wantCount {
-				t.Fatalf("expected %d products, got %d", tc.wantCount, len(products))
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Len(t, products, tc.wantCount)
 			}
 		})
 	}

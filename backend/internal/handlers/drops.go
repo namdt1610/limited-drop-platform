@@ -210,9 +210,10 @@ func (h *Handlers) PayOSWebhook(c fiber.Ctx) error {
 	// Process the successful payment
 	err := h.service.ProcessSuccessfulDropPayment(webhookData.Data.OrderCode)
 	if err != nil {
-		// Log error but return 200 to PayOS to avoid retries
-		return c.JSON(fiber.Map{
-			"message": "Payment processed with errors",
+		// Log error and return 500 to PayOS to trigger retry
+		fmt.Fprintf(os.Stderr, "[WEBHOOK ERROR] Order %d: %v\n", webhookData.Data.OrderCode, err)
+		return c.Status(500).JSON(fiber.Map{
+			"error": "Internal Server Error, please retry",
 		})
 	}
 

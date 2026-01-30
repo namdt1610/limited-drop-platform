@@ -49,7 +49,7 @@ func TestGenerateSymbicode_TableDriven(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newMockRepository()
 			tc.setup(repo)
-			srv := service.NewService(repo)
+			srv := service.NewService(repo, nil, nil, nil)
 
 			sym, err := srv.GenerateSymbicode(tc.productID, tc.orderID)
 
@@ -136,7 +136,7 @@ func TestVerifySymbicode_TableDriven(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newMockRepository()
 			tc.setup(repo)
-			srv := service.NewService(repo)
+			srv := service.NewService(repo, nil, nil, nil)
 
 			sym, isFirst, err := srv.VerifySymbicode(tc.codeStr)
 

@@ -4,9 +4,21 @@ import (
 	"errors"
 	"time"
 
+	"ecommerce-backend/internal/integrations"
 	"ecommerce-backend/internal/models"
 	"ecommerce-backend/internal/repository"
+	"ecommerce-backend/internal/service"
 )
+
+func setup() (service.Service, *mockRepository) {
+	repo := newMockRepository()
+	mockEmail := newMockEmailSender()
+	mockPayment := newMockPaymentGateway()
+	mockSheets := newMockSheetSubmitter()
+
+	svc := service.NewService(repo, mockPayment, mockEmail, mockSheets)
+	return svc, repo
+}
 
 // =============================================================================
 // MOCK REPOSITORY
@@ -228,3 +240,112 @@ func (m *mockRepository) UpdateOrderStatus(id uint64, status uint8) error {
 // =============================================================================
 
 func ptrTime(t time.Time) *time.Time { return &t }
+
+// =============================================================================
+// MOCK PAYMENT GATEWAY
+// =============================================================================
+
+type mockPaymentGateway struct {
+	checkoutResponse *integrations.PayOSCheckoutResponse
+	checkoutErr      error
+	verifyResponse   *integrations.PayOSVerifyResponse
+	verifyErr        error
+	refundErr        error
+	cancelErr        error
+}
+
+func newMockPaymentGateway() *mockPaymentGateway {
+	return &mockPaymentGateway{
+		checkoutResponse: &integrations.PayOSCheckoutResponse{
+			Code: "00",
+			Desc: "success",
+		},
+	}
+}
+
+func (m *mockPaymentGateway) CreateCheckout(req integrations.PayOSCheckoutRequest) (*integrations.PayOSCheckoutResponse, error) {
+	if m.checkoutErr != nil {
+		return nil, m.checkoutErr
+	}
+	if m.checkoutResponse != nil && m.checkoutResponse.Data.CheckoutURL == "" {
+		m.checkoutResponse.Data.CheckoutURL = "https://payos.vn/mock-checkout"
+		m.checkoutResponse.Data.OrderCode = req.OrderCode
+	}
+	return m.checkoutResponse, nil
+}
+
+func (m *mockPaymentGateway) VerifyPayment(orderCode int64) (*integrations.PayOSVerifyResponse, error) {
+	if m.verifyErr != nil {
+		return nil, m.verifyErr
+	}
+	return m.verifyResponse, nil
+}
+
+func (m *mockPaymentGateway) RefundPayment(orderCode int64, reason string) error {
+	return m.refundErr
+}
+
+func (m *mockPaymentGateway) CancelPayment(orderCode int64) error {
+	return m.cancelErr
+}
+
+func (m *mockPaymentGateway) GenerateSignature(data string) string {
+	return "mock-signature"
+}
+
+// =============================================================================
+// MOCK EMAIL SENDER
+// =============================================================================
+
+type mockEmailSender struct {
+	sendOrderConfirmationErr error
+	sendSymbioteReceiptErr   error
+	sendOrderDetailsErr      error
+	sentEmails               []string
+}
+
+func newMockEmailSender() *mockEmailSender {
+	return &mockEmailSender{
+		sentEmails: []string{},
+	}
+}
+
+func (m *mockEmailSender) SendOrderConfirmation(email, orderNumber string, amount float64) error {
+	if m.sendOrderConfirmationErr != nil {
+		return m.sendOrderConfirmationErr
+	}
+	m.sentEmails = append(m.sentEmails, email)
+	return nil
+}
+
+func (m *mockEmailSender) SendSymbioteReceipt(email, phone, status, elapsed string) error {
+	if m.sendSymbioteReceiptErr != nil {
+		return m.sendSymbioteReceiptErr
+	}
+	m.sentEmails = append(m.sentEmails, email)
+	return nil
+}
+
+func (m *mockEmailSender) SendOrderDetails(email string, order interface{}) error {
+	if m.sendOrderDetailsErr != nil {
+		return m.sendOrderDetailsErr
+	}
+	m.sentEmails = append(m.sentEmails, email)
+	return nil
+}
+
+// =============================================================================
+// MOCK SHEET SUBMITTER
+// =============================================================================
+
+type mockSheetSubmitter struct {
+	submitErr error
+}
+
+func newMockSheetSubmitter() *mockSheetSubmitter {
+	return &mockSheetSubmitter{}
+}
+
+func (m *mockSheetSubmitter) SubmitOrder(name, phone, email, address, notes string, amount float64, timestamp interface{}) error {
+	return m.submitErr
+}

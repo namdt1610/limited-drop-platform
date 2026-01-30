@@ -65,7 +65,12 @@ func SendEmailBrevo(to []string, subject, htmlContent string) error {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", "https://api.brevo.com/v3/smtp/email", bytes.NewBuffer(body))
+	baseURL := os.Getenv("BREVO_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api.brevo.com/v3"
+	}
+
+	httpReq, err := http.NewRequest("POST", baseURL+"/smtp/email", bytes.NewBuffer(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

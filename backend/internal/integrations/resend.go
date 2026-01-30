@@ -57,7 +57,12 @@ func SendEmail(to []string, subject, htmlContent string) error {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", "https://api.resend.com/emails", bytes.NewBuffer(body))
+	baseURL := os.Getenv("RESEND_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api.resend.com"
+	}
+
+	httpReq, err := http.NewRequest("POST", baseURL+"/emails", bytes.NewBuffer(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

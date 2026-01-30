@@ -235,7 +235,12 @@ func VerifyPayOSPayment(orderCode int64) (*PayOSVerifyResponse, error) {
 		return nil, fmt.Errorf("PayOS not configured")
 	}
 
-	verifyURL := fmt.Sprintf("https://api-merchant.payos.vn/v2/payment-requests/%d", orderCode)
+	// Allow override for testing
+	baseURL := os.Getenv("PAYOS_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api-merchant.payos.vn/v2"
+	}
+	verifyURL := fmt.Sprintf("%s/payment-requests/%d", baseURL, orderCode)
 
 	httpReq, err := http.NewRequest("GET", verifyURL, nil)
 	if err != nil {
@@ -278,7 +283,12 @@ func CancelPayOSPayment(orderCode int64) error {
 		return fmt.Errorf("PayOS not configured")
 	}
 
-	cancelURL := fmt.Sprintf("https://api-merchant.payos.vn/v2/payment-requests/%d/cancel", orderCode)
+	// Allow override for testing
+	baseURL := os.Getenv("PAYOS_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api-merchant.payos.vn/v2"
+	}
+	cancelURL := fmt.Sprintf("%s/payment-requests/%d/cancel", baseURL, orderCode)
 
 	httpReq, err := http.NewRequest("POST", cancelURL, nil)
 	if err != nil {

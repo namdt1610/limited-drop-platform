@@ -1,6 +1,7 @@
 package service
 
 import (
+	"ecommerce-backend/internal/integrations"
 	"ecommerce-backend/internal/models"
 	"ecommerce-backend/internal/repository"
 )
@@ -48,10 +49,19 @@ type PurchaseResult struct {
 
 // service implements Service interface
 type service struct {
-	repo repository.Repository
+	repo    repository.Repository
+	payment integrations.PaymentGateway
+	email   integrations.EmailSender
+	sheets  integrations.SheetSubmitter
 }
 
 // NewService creates a new service instance
-func NewService(repo repository.Repository) Service {
-	return &service{repo: repo}
+func NewService(repo repository.Repository, payment integrations.PaymentGateway, email integrations.EmailSender, sheets integrations.SheetSubmitter) Service {
+	return &service{
+		repo:    repo,
+		payment: payment,
+		email:   email,
+		sheets:  sheets,
+	}
 }
+

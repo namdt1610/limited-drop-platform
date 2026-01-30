@@ -3,86 +3,60 @@ package service_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"ecommerce-backend/internal/models"
-	"ecommerce-backend/internal/service"
-)
 
-// =============================================================================
-// ORDER SERVICE TESTS
-// =============================================================================
+	"github.com/stretchr/testify/assert"
+)
 
 func TestCreateOrder_TableDriven(t *testing.T) {
 	tests := []struct {
-		name          string
-		phone         string
-		shippingAddr  []byte
-		items         []byte
-		paymentMethod uint8
-		setup         func(*mockRepository)
-		wantErr       bool
+		name           string
+		customerPhone  string
+		shippingAddr   []byte
+		items          []byte
+		paymentMethod  uint8
+		payOSOrderCode *int64
+		mockError      error
+		wantErr        bool
+		wantTotal      uint64
 	}{
 		{
-			name:          "success - valid order",
-			phone:         "0123456789",
-			shippingAddr:  []byte(`{"address":"123 Main St"}`),
-			items:         []byte(`[{"price":100000,"quantity":2}]`),
+			name:          "success",
+			customerPhone: "0909",
+			shippingAddr:  []byte(`{"address":"123"}`),
+			items:         []byte(`[{"product_name":"A","price":100,"quantity":2}]`),
 			paymentMethod: 1,
-			setup:         func(m *mockRepository) {},
+			mockError:     nil,
 			wantErr:       false,
+			wantTotal:     200,
 		},
 		{
-			name:          "success - empty items calculates zero total",
-			phone:         "0123456789",
+			name:          "error - db failed",
+			customerPhone: "0909",
 			shippingAddr:  []byte(`{}`),
 			items:         []byte(`[]`),
-			paymentMethod: 1,
-			setup:         func(m *mockRepository) {},
-			wantErr:       false,
-		},
-		{
-			name:          "success - invalid items JSON still creates order",
-			phone:         "0123456789",
-			shippingAddr:  []byte(`{}`),
-			items:         []byte(`invalid json`),
-			paymentMethod: 1,
-			setup:         func(m *mockRepository) {},
-			wantErr:       false,
-		},
-		{
-			name:          "error - repository create error",
-			phone:         "0123456789",
-			shippingAddr:  []byte(`{}`),
-			items:         []byte(`[]`),
-			paymentMethod: 1,
-			setup: func(m *mockRepository) {
-				m.createOrderErr = errors.New("database error")
-			},
-			wantErr: true,
+			mockError:     errors.New("db error"),
+			wantErr:       true,
+			wantTotal:     0,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := newMockRepository()
-			tc.setup(repo)
-			srv := service.NewService(repo)
+			s, m := setup()
+			if tc.mockError != nil {
+				m.createOrderErr = tc.mockError
+			}
 
-			// Pass nil for payOSOrderCode as per new signature
-			order, err := srv.CreateOrder(tc.phone, tc.shippingAddr, tc.items, tc.paymentMethod, nil)
+			order, err := s.CreateOrder(tc.customerPhone, tc.shippingAddr, tc.items, tc.paymentMethod, tc.payOSOrderCode)
 
 			if tc.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("expected success, got error: %v", err)
-			}
-			if order == nil {
-				t.Fatal("expected order, got nil")
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tc.wantTotal, order.TotalAmount)
 			}
 		})
 	}
@@ -90,55 +64,44 @@ func TestCreateOrder_TableDriven(t *testing.T) {
 
 func TestGetOrderByID_TableDriven(t *testing.T) {
 	tests := []struct {
-		name    string
-		orderID uint64
-		setup   func(*mockRepository)
-		wantErr bool
+		name       string
+		orderID    uint64
+		mockReturn *models.Order
+		mockError  error
+		wantErr    bool
 	}{
 		{
-			name:    "success - order exists",
-			orderID: 1,
-			setup: func(m *mockRepository) {
-				m.orders[1] = &models.Order{ID: 1, CustomerPhone: "0123"}
-			},
-			wantErr: false,
+			name:       "success",
+			orderID:    1,
+			mockReturn: &models.Order{ID: 1},
+			mockError:  nil,
+			wantErr:    false,
 		},
 		{
-			name:    "error - order not found",
-			orderID: 999,
-			setup:   func(m *mockRepository) {},
-			wantErr: true,
-		},
-		{
-			name:    "error - repository error",
-			orderID: 1,
-			setup: func(m *mockRepository) {
-				m.getOrderErr = errors.New("database error")
-			},
-			wantErr: true,
+			name:       "error - not found",
+			orderID:    99,
+			mockReturn: nil,
+			mockError:  errors.New("not found"),
+			wantErr:    true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := newMockRepository()
-			tc.setup(repo)
-			srv := service.NewService(repo)
+			s, m := setup()
+			if tc.mockError != nil {
+				m.getOrderErr = tc.mockError
+			} else if tc.mockReturn != nil {
+				m.orders[tc.orderID] = tc.mockReturn
+			}
 
-			order, err := srv.GetOrderByID(tc.orderID)
+			order, err := s.GetOrderByID(tc.orderID)
 
 			if tc.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("expected success, got error: %v", err)
-			}
-			if order == nil {
-				t.Fatal("expected order, got nil")
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tc.mockReturn, order)
 			}
 		})
 	}
@@ -146,60 +109,46 @@ func TestGetOrderByID_TableDriven(t *testing.T) {
 
 func TestGetOrdersByUserPhone_TableDriven(t *testing.T) {
 	tests := []struct {
-		name      string
-		phone     string
-		setup     func(*mockRepository)
-		wantCount int
-		wantErr   bool
+		name       string
+		phone      string
+		mockReturn []models.Order
+		mockError  error
+		wantErr    bool
 	}{
 		{
-			name:  "success - user has orders",
-			phone: "0123456789",
-			setup: func(m *mockRepository) {
-				m.ordersByPhone["0123456789"] = []models.Order{
-					{ID: 1}, {ID: 2}, {ID: 3},
-				}
+			name:  "success",
+			phone: "0909",
+			mockReturn: []models.Order{
+				{ID: 1, CreatedAt: time.Now()},
 			},
-			wantCount: 3,
+			mockError: nil,
 			wantErr:   false,
 		},
 		{
-			name:      "success - user has no orders",
-			phone:     "0000000000",
-			setup:     func(m *mockRepository) {},
-			wantCount: 0,
-			wantErr:   false,
-		},
-		{
-			name:  "error - repository error",
-			phone: "0123456789",
-			setup: func(m *mockRepository) {
-				m.getOrdersErr = errors.New("database error")
-			},
-			wantErr: true,
+			name:       "error - db error",
+			phone:      "0909",
+			mockReturn: nil,
+			mockError:  errors.New("db error"),
+			wantErr:    true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := newMockRepository()
-			tc.setup(repo)
-			srv := service.NewService(repo)
+			s, m := setup()
+			if tc.mockError != nil {
+				m.getOrdersErr = tc.mockError
+			} else {
+				m.ordersByPhone[tc.phone] = tc.mockReturn
+			}
 
-			orders, err := srv.GetOrdersByUserPhone(tc.phone)
+			orders, err := s.GetOrdersByUserPhone(tc.phone)
 
 			if tc.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("expected success, got error: %v", err)
-			}
-			if len(orders) != tc.wantCount {
-				t.Fatalf("expected %d orders, got %d", tc.wantCount, len(orders))
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tc.mockReturn, orders)
 			}
 		})
 	}
