@@ -73,56 +73,10 @@ func (h *Handlers) PurchaseDrop(c fiber.Ctx) error {
 		})
 	}
 
-	// Log purchase attempt
-	fmt.Fprintf(os.Stderr, "[PURCHASE] Attempt - Drop: %d, Name: %s, Phone: %s, Email: %s\n", dropID, req.Name, req.Phone, req.Email)
-
 	// Validate required fields
-	if req.Name == "" {
-		fmt.Fprintf(os.Stderr, "[PURCHASE ERROR] Drop %d - Missing Name\n", dropID)
+	if err := validatePurchaseRequest(dropID, req); err != nil {
 		return c.Status(400).JSON(fiber.Map{
-			"message": "Họ và tên là bắt buộc",
-		})
-	}
-	if req.Phone == "" {
-		fmt.Fprintf(os.Stderr, "[PURCHASE ERROR] Drop %d - Missing Phone\n", dropID)
-		return c.Status(400).JSON(fiber.Map{
-			"message": "Số điện thoại là bắt buộc",
-		})
-	}
-	if req.Email == "" {
-		fmt.Fprintf(os.Stderr, "[PURCHASE ERROR] Drop %d - Missing Email\n", dropID)
-		return c.Status(400).JSON(fiber.Map{
-			"message": "Email là bắt buộc",
-		})
-	}
-	if req.Address == "" {
-		fmt.Fprintf(os.Stderr, "[PURCHASE ERROR] Drop %d - Missing Address\n", dropID)
-		return c.Status(400).JSON(fiber.Map{
-			"message": "Địa chỉ là bắt buộc",
-		})
-	}
-	if req.Province == "" {
-		fmt.Fprintf(os.Stderr, "[PURCHASE ERROR] Drop %d - Missing Province\n", dropID)
-		return c.Status(400).JSON(fiber.Map{
-			"message": "Tỉnh / thành phố là bắt buộc",
-		})
-	}
-	if req.District == "" {
-		fmt.Fprintf(os.Stderr, "[PURCHASE ERROR] Drop %d - Missing District\n", dropID)
-		return c.Status(400).JSON(fiber.Map{
-			"message": "Quận / huyện là bắt buộc",
-		})
-	}
-	if req.Ward == "" {
-		fmt.Fprintf(os.Stderr, "[PURCHASE ERROR] Drop %d - Missing Ward\n", dropID)
-		return c.Status(400).JSON(fiber.Map{
-			"message": "Phường / xã là bắt buộc",
-		})
-	}
-	if req.Quantity <= 0 {
-		fmt.Fprintf(os.Stderr, "[PURCHASE ERROR] Drop %d - Invalid Quantity: %d\n", dropID, req.Quantity)
-		return c.Status(400).JSON(fiber.Map{
-			"message": "Số lượng phải lớn hơn 0",
+			"message": err.Error(),
 		})
 	}
 
@@ -140,13 +94,11 @@ func (h *Handlers) PurchaseDrop(c fiber.Ctx) error {
 
 	result, err := h.service.PurchaseDrop(dropID, purchaseReq)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[PURCHASE ERROR] Drop %d - Service error: %v\n", dropID, err)
+		// Do not log "Sold Out" errors as they are expected at high volume
 		return c.Status(400).JSON(fiber.Map{
 			"error": err.Error(),
 		})
 	}
-
-	fmt.Fprintf(os.Stderr, "[PURCHASE SUCCESS] Drop %d - Phone: %s, PaymentURL: %s\n", dropID, req.Phone, result.PaymentURL)
 
 	return c.JSON(result)
 }
@@ -227,4 +179,41 @@ func registerDropRoutes(app *fiber.App, h *Handlers) {
 	app.Get("/api/drops/:id/status", h.GetDropStatus)
 	app.Post("/api/drops/:id/purchase", h.PurchaseDrop)
 	app.Post("/api/limited-drops/webhook/payos", h.PayOSWebhook)
+}
+
+func validatePurchaseRequest(dropID uint64, req struct {
+	Quantity int    `json:"quantity"`
+	Name     string `json:"name"`
+	Phone    string `json:"phone"`
+	Email    string `json:"email"`
+	Address  string `json:"address"`
+	Province string `json:"province"`
+	District string `json:"district"`
+	Ward     string `json:"ward"`
+}) error {
+	if req.Name == "" {
+		return fmt.Errorf("Drop %d - Họ và tên là bắt buộc", dropID)
+	}
+	if req.Phone == "" {
+		return fmt.Errorf("Drop %d - Số điện thoại là bắt buộc", dropID)
+	}
+	if req.Email == "" {
+		return fmt.Errorf("Drop %d - Email là bắt buộc", dropID)
+	}
+	if req.Address == "" {
+		return fmt.Errorf("Drop %d - Địa chỉ là bắt buộc", dropID)
+	}
+	if req.Province == "" {
+		return fmt.Errorf("Drop %d - Tỉnh / thành phố là bắt buộc", dropID)
+	}
+	if req.District == "" {
+		return fmt.Errorf("Drop %d - Quận / huyện là bắt buộc", dropID)
+	}
+	if req.Ward == "" {
+		return fmt.Errorf("Drop %d - Phường / xã là bắt buộc", dropID)
+	}
+	if req.Quantity <= 0 {
+		return fmt.Errorf("Drop %d - Số lượng phải lớn hơn 0", dropID)
+	}
+	return nil
 }

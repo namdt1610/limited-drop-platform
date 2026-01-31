@@ -51,13 +51,22 @@ services:
     networks:
       - donald-network
     restart: unless-stopped
+    # Intel Engineering Requirement: Resource Isolation via Cgroups
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50" # Cap at 50% of one core
+          memory: 512M # Hard memory limit (OOM Kill)
+        reservations:
+          cpus: "0.25" # Guaranteed CPU
+          memory: 256M # Guaranteed Memory
 
   # LocalStack - S3 Emulation
   localstack:
     image: localstack/localstack:latest
     container_name: donald-localstack
     ports:
-      - "4566:4566"            # Edge port
+      - "4566:4566" # Edge port
     environment:
       - SERVICES=s3
       - DEBUG=1

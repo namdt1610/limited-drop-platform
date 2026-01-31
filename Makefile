@@ -46,6 +46,15 @@ dev-local:
 	@echo "Starting frontend..."
 	cd alpine && bun run dev
 
+server:
+	cd backend && go run ./cmd/server
+
+seed:
+	cd backend && FORCE_SEED=true go run ./cmd/seed
+
+test-k6:
+	k6 run tests/load/k6-loadtest.js
+
 dev-localstack:
 	docker compose -f deploy/docker/docker-compose.localstack.yml up
 

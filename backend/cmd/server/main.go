@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
+	_ "net/http/pprof" // Register pprof handlers
 	"os"
 	"os/signal"
 	"syscall"
@@ -120,6 +122,16 @@ func main() {
 	go func() {
 		if err := app.Listen(":" + cfg.Port); err != nil {
 			log.Printf("server failed: %v", err)
+		}
+	}()
+
+	// Start pprof server for profiling (Intel Engineering Requirement)
+	go func() {
+		// Listen on localhost:6060.
+		// Access profiles via: go tool pprof http://localhost:6060/debug/pprof/profile
+		log.Println("🔌 Pprof debugger running at http://localhost:6060/debug/pprof/")
+		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
+			log.Printf("pprof failed: %v", err)
 		}
 	}()
 
