@@ -34,12 +34,34 @@ Before updating the RAM state, we modify the log.
 
 **The Flow:**
 
+```ascii
+   ┌───────────┐
+   │  Request  │
+   │  (Buy #1) │
+   └─────┬─────┘
+         │
+         ▼
+┌──────────────────┐      1. Serialize Event
+│   Application    │ ──────────────────────────────┐
+│   (Go Structs)   │                              │
+└────────┬─────────┘                              │
+         │ 3. Update RAM (Sold++)                 │
+         │    (Microseconds)                      │
+         │                                        ▼
+         │                             ┌────────────────────┐
+         │                             │     WAL FILE       │
+         │      2. Append & Sync       │   (drop_1.wal)     │
+         └───────────────────────────► │ [BUY, #1, namdt]   │
+                                       │ [BUY, #1, user2]   │
+                                       └────────────────────┘
+```
+
+**The Flow:**
+
 1.  **Request:** User buys Drop #1.
-2.  **Serialize:** Create a binary/JSON entry: `{"op": "BUY", "drop_id": 1, "user": "namdt", "ts": 123456}`.
-3.  **WAL Append:** Write this entry to `drop_1.wal`.
-    - _Critical:_ Requires `fsync` (or OS cache if we trust OS stability) to ensure data is on disk.
-4.  **Memory Update:** `DropState.Sold++`.
-5.  **Response:** Return "Success" to user.
+2.  **WAL Append:** Serialize & Append to `drop_1.wal`.
+3.  **Memory Update:** `DropState.Sold++` (only after WAL success).
+4.  **Response:** Return "Success" to user.
 
 ### C. Recovery (Startup)
 

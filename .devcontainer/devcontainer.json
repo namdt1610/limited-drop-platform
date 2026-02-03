@@ -1,0 +1,17 @@
+{
+	"name": "Limited Drop Platform (Go + Redis + SQLite)",
+	"image": "mcr.microsoft.com/devcontainers/go:1-1.23-bookworm",
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
+		"ghcr.io/devcontainers/features/sqlite:2": {}
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"golang.Go"
+			]
+		}
+	},
+	"postCreateCommand": "cd backend && go mod download",
+	"forwardPorts": [3000, 6379]
+}

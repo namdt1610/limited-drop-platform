@@ -10,16 +10,24 @@ This system achieves approximately 9,000 requests per second during limited drop
 
 The foundation of high throughput is the split database pool:
 
-```
+```ascii
 Incoming 9,000 requests/sec
-    |
-    +-- 8,500 status checks -----> Reader Pool (100 connections)
-    |   (GetDropStatus)             Each request: ~50-200 microseconds
-    |                               All read simultaneously in parallel
-    |
-    +-- 500 purchases -----------> Writer Pool (1 connection)
-        (PurchaseDrop)              Each request: ~100-400 microseconds
-                                    Serialized - no race conditions
+          │
+          ├─── [94% Read Traffic] ──────────────────────────┐
+          │    (GetDropStatus)                              │
+          ▼                                                 ▼
+  ┌─────────────────┐                              ┌──────────────────┐
+  │   Reader Pool   │                              │   Writer Queue   │
+  │ (100 parallel)  │                              │   (Serialized)   │
+  └───────┬─────────┘                              └────────┬─────────┘
+          │                                                 │
+          │ SELECT status                                   │ INSERT order
+          │ (Non-blocking)                                  │ (Atomic)
+          ▼                                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                       SQLite (WAL Mode)                             │
+│       [readers view snapshot]       [writer appends to log]         │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 #### Reader Pool Details (100 connections)
@@ -140,22 +148,38 @@ if errors.Is(err, repository.ErrSoldOut) {
 
 Race Condition Prevention:
 
-```
-Thread A                          Thread B
-------                            ------
-Read: sold=4, available=1         Read: sold=4, available=1
-Check: 4 < 5? YES                 Check: 4 < 5? YES
-       |
-       -----> Writer Queue <-----
-              |
-              Increment: sold=5
-              |
-       Thread A wins, gets order
-              |
-              Increment fails: ErrSoldOut
-              |
-       Thread B loses, gets "sold out" response
-```
+````
+```ascii
+      Thread A                      Thread B
+         │                             │
+    ┌────▼────┐                   ┌────▼────┐
+    │ Read: 4 │                   │ Read: 4 │
+    └────┬────┘                   └────┬────┘
+         │                             │
+    ┌────▼────┐                   ┌────▼────┐
+    │ Check <5│                   │ Check <5│
+    └────┬────┘                   └────┬────┘
+         │                             │
+         └─────────────┬───────────────┘
+                       │
+             ┌─────────▼─────────┐
+             │   WRITER MUTEX    │
+             │   (Serialized)    │
+             └─────────┬─────────┘
+                       │
+          ┌────────────▼────────────┐
+          │ Writer: Increment -> 5  │
+          │ (Thread A Succeeds)     │
+          └────────────┬────────────┘
+                       │
+             ┌─────────▼─────────┐
+             │ Writer: Increment │
+             │ (Thread B Fails)  │
+             │ Error: Sold Out   │
+             └───────────────────┘
+````
+
+````
 
 Key principle: All Sold count increments go through the single Writer connection, guaranteeing serialization and preventing overselling.
 
@@ -178,7 +202,7 @@ func (se *SmartExecutor) Query(query string, args ...interface{}) (*sql.Rows, er
 func (se *SmartExecutor) Exec(query string, args ...interface{}) (sql.Result, error) {
     return se.writer.Exec(query, args...)
 }
-```
+````
 
 Benefits:
 
@@ -380,19 +404,16 @@ Option 2: Migrate to distributed system
 Key metrics to track:
 
 1. Request Rate (requests/second)
-
    - Status checks
    - Purchases
    - Failed requests
 
 2. Latency (milliseconds)
-
    - p50, p95, p99 percentiles
    - Handler latency
    - Database latency
 
 3. Database Metrics
-
    - Reader pool connections active
    - Writer queue depth
    - Transaction duration

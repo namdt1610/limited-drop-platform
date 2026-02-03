@@ -9,6 +9,39 @@
 
 A specialized transactional engine designed to handle "thundering herd" traffic spikes during limited inventory sales. The system architecture prioritizes consistent latency and data integrity over distributed complexity, utilizing a **Single-Writer / Multi-Reader (SWMR)** model backed by an embedded storage engine.
 
+```ascii
+┌─────────────────────────────────────────────────────────────┐
+│                   Load Balancer / Nginx                     │
+└──────────────┬───────────────────────────────┬──────────────┘
+               │                               │
+        ┌──────▼──────┐                 ┌──────▼──────┐
+        │  Instance A │                 │  Instance B │
+        └──────┬──────┘                 └──────┬──────┘
+               │                               │
+               └──────────────┬────────────────┘
+                              │
+                    ┌─────────▼─────────┐
+                    │  Go Fiber Engine  │
+                    │  (Single Node)    │
+                    └─────────┬─────────┘
+                              │
+         ┌────────────────────┼─────────────────────┐
+         │                    │                     │
+  ┌──────▼──────┐      ┌──────▼──────┐       ┌──────▼──────┐
+  │ Reader Pool │      │ Writer Queue│       │ Bg Workers  │
+  │ (100 conns) │      │ (1 conn)    │       │ (Async)     │
+  └──────┬──────┘      └──────┬──────┘       └──────┬──────┘
+         │             (Mutex)│                     │
+         │             ┌──────▼──────┐              │
+         │             │  Tx Guard   │              │
+         │             └──────┬──────┘              │
+         │                    │                     │
+  ┌──────▼────────────────────▼─────────────────────▼──────┐
+  │                 SQLite (WAL Mode)                      │
+  │         Writes tend to WAL -> Checkpoint to DB         │
+  └────────────────────────────────────────────────────────┘
+```
+
 ### Performance Optimization Strategy
 
 The core architectural decision moves away from traditional networked RDBMS (Postgres, MySQL) to eliminate Network Round-Trip Time (RTT) and leverage the specific performance characteristics of NVMe storage.
@@ -30,6 +63,32 @@ The core architectural decision moves away from traditional networked RDBMS (Pos
 ## Component Deep Dive
 
 ### 1. Concurrency Control (The "Mutex vs Lock" Strategy)
+
+```ascii
+      ┌───────────┐
+      │  Request  │
+      └─────┬─────┘
+            │
+   Is it a Write/Buy?
+            │
+     ┌──────┴──────┐
+     │             │
+    NO            YES
+     │             │
+┌────▼─────┐  ┌────▼────────────────────────┐
+│ Reader   │  │  Application Mutex (Go)     │ <── Contention Layer 1
+│ Pool     │  │  (Capacity: 1)              │     (Moves load off DB)
+└────┬─────┘  └────┬────────────────────────┘
+     │             │
+     │        ┌────▼────────────────────────┐
+     │        │  SQLite Immediate Tx        │ <── Contention Layer 2
+     │        │  (Reserved Lock)            │     (Zero Busy Waits)
+     │        └────┬────────────────────────┘
+     │             │
+┌────▼─────────────▼────┐
+│   SQLite Engine       │
+└───────────────────────┘
+```
 
 Instead of relying on row-level locking (Postgres `SELECT FOR UPDATE`) which can lead to deadlock detection overhead during high contention:
 
