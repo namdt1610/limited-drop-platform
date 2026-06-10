@@ -25,13 +25,14 @@ import "./pages/terms.js";
 import "./pages/policy.js";
 import "./pages/track-order.js";
 import "./pages/verify.js";
+import "./pages/showcase.js";
 
 // Ensure custom elements are block-level to avoid layout issues
 const style = document.createElement("style");
 style.textContent = `
   landing-page, drop-page, product-page, products-page, collection-page, 
   checkout-page, payment-success-page, payment-cancel-page, terms-page, 
-  policy-page, track-order-page, verify-page {
+  policy-page, track-order-page, verify-page, showcase-page {
     display: block;
   }
 `;

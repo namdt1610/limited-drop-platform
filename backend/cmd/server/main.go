@@ -30,7 +30,6 @@ import (
 )
 
 func main() {
-	// Load configuration
 	cfg := config.Load()
 
 	// Initialize optimized SQLite database with Split Architecture (Writer/Reader)

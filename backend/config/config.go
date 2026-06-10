@@ -51,11 +51,6 @@ func Load() *Config {
 		},
 	}
 
-	// Handle legacy DB_PATH if DATABASE_URL not set
-	if config.DatabaseURL == "" {
-		config.DatabaseURL = getEnv("DB_PATH", "./database.db")
-	}
-
 	return config
 }
 

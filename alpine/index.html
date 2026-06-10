@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="vi" class="dark">
   <head>
     <meta charset="UTF-8" />
@@ -22,7 +22,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Cormorant+Garamond:wght@600;700&family=Playfair+Display:wght@400;500;600;700;800&family=Cinzel+Decorative:wght@700;900&display=swap"
       rel="stylesheet"
       media="print"
-      onload="this.media='all'"
+      onload="this.media = 'all'"
     />
     <noscript>
       <link
@@ -83,6 +83,10 @@
 
         <template x-if="path === 'verify'">
           <verify-page></verify-page>
+        </template>
+
+        <template x-if="path === 'showcase'">
+          <showcase-page></showcase-page>
         </template>
       </main>
     </div>
